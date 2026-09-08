@@ -1,0 +1,28 @@
+CompileFlags:
+  CompilationDatabase: build
+  Add:
+    - -std=c++20
+    - -Isource
+    - -Itest
+    - -Iinclude
+    - -Wall
+    - -Wextra
+  Remove:
+    - -m*
+
+Diagnostics:
+  UnusedIncludes: None
+  ClangTidy:
+    Add:
+      - performance-*
+      - bugprone-*
+    Remove:
+      - bugprone-easily-swappable-parameters
+
+InlayHints:
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true
+
+Index:
+  Background: Build

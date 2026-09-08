@@ -1,0 +1,39 @@
+* text=auto eol=lf
+
+*.c     text diff=cpp
+*.h     text diff=cpp
+*.cpp   text diff=cpp
+*.hpp   text diff=cpp
+*.cc    text diff=cpp
+*.inl   text diff=cpp
+*.ini   text
+*.md    text
+*.txt   text
+*.yml   text
+*.yaml  text
+.gitignore     text
+.gitattributes text
+meson.build    text
+meson_options.txt text
+
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+*.sh   text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.exe  binary
+*.dll  binary
+*.lib  binary
+*.a    binary
+*.so   binary
+*.dylib binary
+*.pdb  binary
+
+build-cfg/* linguist-vendored
