@@ -2,7 +2,32 @@
 
 `ceddec` is a small & extremely lightweight x86/x86-64 disassembly-to-C decompiler pipeline, written in C++20.
 
-![](.assets/preview.png)
+input: 
+```asm
+    mov eax, 0
+    mov ecx, 0
+loop_top:
+    cmp ecx, edi
+    jge loop_end
+    add eax, ecx
+    inc ecx
+    jmp loop_top
+loop_end:
+    ret
+```
+
+output:
+```c
+int64_t sub_function(int64_t a1) {
+    eax_v1 = 0;
+    ecx_v1 = 0;
+    while ((ecx_v1 < a1)) {
+        eax_v3 = (eax_v1 + ecx_v1);
+        ecx_v3 = (ecx_v1 + 1);
+    }
+    return eax_v1;
+}
+```
 
 ## Requirements
 
