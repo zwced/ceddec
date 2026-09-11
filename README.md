@@ -403,7 +403,7 @@ auto ast = ceddec::ASTBuilder::BuildAST(cfg);
 ## Notes
 
 * All public API symbols are marked `CEDDEC_API` for correct DLL export/visibility on both Windows and Linux. 
-* You don't need to do anything special to consume them from another shared library or executable.
+* You don't need to do anything special to use them from another shared library or executable.
 * `types.hpp` defines the shared vocabulary (`Register`, `IROpcode`, `ConditionCode`, `ParsedInstruction`, `IRInstruction`, `ControlFlowGraph`, etc.) used across every stage. Worth skimming first if you're extending the pipeline rather than just consuming it.
 * Internals under `source/misc/` (opcode-to-`IROpcode` mapping, register name parsing/printing) are implementation detail, not part of the public interface, and may change without notice.
 * `AnalyzeCallingConvention` and `ASTBuilder`'s CFG structuring are both heuristic-based. They aim for readable output on typical compiler-generated code, not bit-for-bit ABI accuracy on adversarial or hand-written assembly.
