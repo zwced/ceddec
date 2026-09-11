@@ -96,14 +96,9 @@ meson compile -C build
 | Target | Type | Description |
 |---|---|---|
 | `ceddec_api` | shared library | The core library: parser, IR lifter, AST builder, emitters |
-| `test1` | executable | Basic sanity-test binary (`tests/test1.cpp`) |
-| `ceddec` | executable | Interactive CLI driver (`tests/ceddec.cpp`), shown above |
-
-`test1` and `ceddec` are both optional and can be turned off if you only want the library:
-
-```
-meson setup build -Dtests=false -Dcli=false
-```
+| `test1` | executable | Basic sanity-test binary (`.tests/test1.cpp`) |
+| `test2` | executable | Advanced sanity-test binary (`.tests/test2.cpp`) |
+| `ceddec` | executable | Interactive CLI driver (`.tests/ceddec.cpp`), shown above |
 
 ## Compiling
 
@@ -111,20 +106,6 @@ meson setup build -Dtests=false -Dcli=false
 meson setup build
 meson compile -C build
 ```
-
-Useful variants:
-
-```
-# static library instead of shared
-meson setup build -Ddefault_library=static
-
-# release build
-meson setup build --buildtype=release
-
-# skip the demo binaries, library only
-meson setup build -Dtests=false -Dcli=false
-```
-
 
 ## The pipeline, stage by stage
 
@@ -273,7 +254,7 @@ std::string Decompile(std::string_view asm_text) {
 }
 ```
 
-This is essentially what `tests/ceddec.cpp` does under the hood for the interactive CLI shown at the top of this README: parse into a block, lift and SSA-rename the CFG, structure it into an AST, recover a best-guess signature, and emit C.
+This is essentially what `.tests/ceddec.cpp` does under the hood for the interactive CLI shown at the top of this README: parse into a block, lift and SSA-rename the CFG, structure it into an AST, recover a best-guess signature, and emit C.
 
 ## More examples
 
@@ -416,7 +397,7 @@ ceddec::IRLifter::CalculateDominanceFrontiers(cfg);
 ceddec::IRLifter::InsertPhiNodes(cfg);
 ceddec::IRLifter::RenameVariables(cfg);
 
-ceddec::PrintCFGAnalysis(cfg);   // eyeball dominators/phi nodes before calling ASTBuilder::BuildAST
+ceddec::PrintCFGAnalysis(cfg);   // lookat dominators/phi nodes before calling ASTBuilder::BuildAST
 auto ast = ceddec::ASTBuilder::BuildAST(cfg);
 ```
 

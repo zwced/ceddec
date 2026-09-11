@@ -18,6 +18,7 @@
 #include <cmath>
 #include <limits>
 #include <cassert>
+#include <functional>
 
 namespace ceddec {
     enum class Architecture : uint8_t {
@@ -174,6 +175,20 @@ namespace ceddec {
     struct CEDDEC_API IROperand {
         std::variant<Register, MemoryOperand, int64_t, std::string> value;
         uint32_t ssa_version = 0;
+
+        /*
+         * for a destination operand on a read-modify-write instruction (add,
+         * sub, and, inc, ...), ssa_version above holds the NEW version created
+         * by this write. pre_write_version holds the version the same register
+         * held immediately beforehand,i.e. the value actually being read as
+         * part of the RMW. UINT32_MAX means "not applicable / not set", NOT
+         * 0, since 0 is a legitimate, meaningful value here (a register that
+         * is a true live-in / upward-exposed value with no prior write at all,
+         * e.g. `rax` used before ever being assigned in the function, has a
+         * genuine pre-write version of 0, distinct from "this field wasn't
+         * populated because the operand isn't an RMW destination").
+         */
+        uint32_t pre_write_version = UINT32_MAX;
     };
 
     struct CEDDEC_API IRInstruction {

@@ -1,35 +1,28 @@
+#pragma once
 #include <ceddec/types.hpp>
 #include <ceddec/ast.hpp>
+#include <ceddec/ir.hpp>
+#include <ceddec/naming.hpp>
 
 namespace ceddec {
     inline static FunctionSignature AnalyzeCallingConvention(const ControlFlowGraph& cfg) {
         FunctionSignature sig;
-        sig.name = "sub_function";
+        sig.name = ActiveNamingScheme().function_name();
         sig.return_type = "int64_t";
 
-        bool uses_edi = false;
-        bool uses_esi = false;
+        /*
+         * reuses the exact same upward-exposed-register analysis the AST
+         * builder uses, so the function signature and the body can never
+         * disagree about which registers are parameters or what order
+         * they're in.
+         */
+        std::set<Register> live_in = IRLifter::FindUpwardExposedRegisters(cfg);
+        std::map<Register, size_t> param_index = IRLifter::BuildParamIndexMap(live_in);
 
-        for (const auto& block : cfg.blocks) {
-            for (const auto& inst : block.instructions) {
-                auto check_op = [&](const IROperand& op) {
-                    if (std::holds_alternative<Register>(op.value)) {
-                        Register r = std::get<Register>(op.value);
-                        if (r == Register::EDI || r == Register::RDI) uses_edi = true;
-                        if (r == Register::ESI || r == Register::RSI) uses_esi = true;
-                    } else if (std::holds_alternative<std::string>(op.value)) {
-                        std::string s = std::get<std::string>(op.value);
-                        if (s == "edi" || s == "rdi") uses_edi = true;
-                        if (s == "esi" || s == "rsi") uses_esi = true;
-                    }
-                };
-                check_op(inst.source);
-                check_op(inst.destination);
-            }
+        sig.params.resize(param_index.size());
+        for (const auto& [reg, idx] : param_index) {
+            sig.params[idx] = "int64_t " + ActiveNamingScheme().param_name(idx);
         }
-
-        if (uses_edi) sig.params.push_back("int64_t arg0");
-        if (uses_esi) sig.params.push_back("int64_t arg1");
 
         return sig;
     }

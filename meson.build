@@ -1,5 +1,5 @@
 project('ceddec', 'cpp',
-  version : '0.0.1',
+  version : '0.0.2',
   license : 'MIT',
   default_options : [
     'cpp_std=c++20',
@@ -18,6 +18,7 @@ ceddec_sources = files(
   'source/ir_lifter.cpp',
   'source/printer.cpp',
   'source/formatter.cpp',
+  'source/naming.cpp',
   'source/ast_builder.cpp',
   'source/emitters/base.cpp',
   'source/emitters/c.cpp',
@@ -46,16 +47,17 @@ pkg.generate(ceddec_api,
   version : meson.project_version(),
 )
 
-if get_option('tests')
-  executable('test1',
-    '.tests/test1.cpp',
-    dependencies : ceddec_dep,
-  )
-endif
+executable('test1',
+  '.tests/test1.cpp',
+  dependencies : ceddec_dep,
+)
 
-if get_option('cli')
-  executable('ceddec',
-    '.tests/ceddec.cpp',
-    dependencies : ceddec_dep,
-  )
-endif
+executable('test2',
+  '.tests/test2.cpp',
+  dependencies : ceddec_dep,
+)
+
+executable('ceddec',
+  '.tests/ceddec.cpp',
+  dependencies : ceddec_dep,
+)

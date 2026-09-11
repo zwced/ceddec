@@ -5,6 +5,7 @@
 #include <source/misc/register.hpp>
 
 #include <tools.hpp>
+#include <functional>
 
 namespace {
     using namespace ceddec;
@@ -92,6 +93,54 @@ namespace {
             return lifted_ops;
         }
 
+        /*
+         * calls are lifted explicitly rather than through the generic fallback
+         * below: the call target (a Label, or occasionally a Register/Memory for
+         * an indirect call) must always end up as ir.destination, guaranteed
+         * non-empty whenever the parser produced any operand at all. Going
+         * through the generic path relies on operands[0] always being exactly
+         * the callee with nothing else going on, and silently produces a
+         * default (Register::Unknown) destination if that assumption doesn't
+         * hold for some parser path, which then prints as a bogus "rax" in
+         * emitted C, indistinguishable from an actual empty operand.
+         */
+        if (m_lower == "call") {
+            ceddec::IRInstruction call_ir;
+            call_ir.opcode = ceddec::IROpcode::Call;
+            call_ir.condition = parsed_inst.condition;
+            call_ir.original_index = inst_idx;
+            if (!parsed_inst.operands.empty()) {
+                const auto& target_op = parsed_inst.operands[0];
+                if (target_op.type == ceddec::OperandType::Register) {
+                    /*
+                     * a bare call target symbol (e.g. "call helper") can get
+                     * misclassified upstream as a Register operand if the
+                     * parser's heuristic for "unadorned word" defaults to
+                     * assuming a register. If it doesn't actually resolve to a
+                     * real register, it's a callee symbol, not garbage,
+                     * fall back to keeping the raw text rather than silently
+                     * collapsing to Register::Unknown (which prints as a bogus
+                     * "rax" downstream, indistinguishable from a truly missing
+                     * operand).
+                     */
+                    ceddec::Register resolved = ParseRegister(target_op.raw_text);
+                    if (resolved != ceddec::Register::Unknown) {
+                        call_ir.destination.value = resolved;
+                    } else {
+                        call_ir.destination.value = std::string(target_op.raw_text);
+                    }
+                } else if (target_op.type == ceddec::OperandType::Memory) {
+                    call_ir.destination.value = target_op.mem;
+                } else {
+                    /* Label, or anything else the parser produced: keep the raw text verbatim */
+                    call_ir.destination.value = std::string(target_op.raw_text);
+                }
+            }
+            call_ir.is_valid = true;
+            lifted_ops.push_back(call_ir);
+            return lifted_ops;
+        }
+
         /* standard 1-to-1 fallback */
         ceddec::IRInstruction ir;
         ir.opcode = MapOpcode(m_lower);
@@ -130,6 +179,32 @@ namespace {
         return lifted_ops;
     }
 
+    /* true if `op`'s opcode reads its destination in addition to writing it
+       (arithmetic/logic RMW ops, and pure-read ops like compare/test) */
+    static bool DestIsAlsoRead(ceddec::IROpcode op) {
+        using ceddec::IROpcode;
+        switch (op) {
+            case IROpcode::Add: case IROpcode::Sub:
+            case IROpcode::AddCarry: case IROpcode::SubBorrow:
+            case IROpcode::And: case IROpcode::Or: case IROpcode::Xor:
+            case IROpcode::Shl: case IROpcode::Shr: case IROpcode::Rol: case IROpcode::Ror:
+            case IROpcode::Inc: case IROpcode::Dec: case IROpcode::Neg: case IROpcode::Not:
+            case IROpcode::Compare: case IROpcode::Test:
+            case IROpcode::BitTest: case IROpcode::BitSet:
+            case IROpcode::BitReset: case IROpcode::BitComplement:
+            case IROpcode::Mul: case IROpcode::Div:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /* opcodes whose "destination" is purely read, never written (comparisons) */
+    static bool IsPureReadDest(ceddec::IROpcode op) {
+        using ceddec::IROpcode;
+        return op == IROpcode::Compare || op == IROpcode::Test || op == IROpcode::BitTest;
+    }
+
     static void RenameBlockDFS(size_t block_id, ceddec::ControlFlowGraph& cfg, ceddec::SSARenameState& state) {
         auto& block = cfg.blocks[block_id];
         std::vector<ceddec::Register> pushed_regs;
@@ -139,10 +214,12 @@ namespace {
             if (inst.opcode == ceddec::IROpcode::Phi) {
                 if (std::holds_alternative<ceddec::Register>(inst.destination.value)) {
                     ceddec::Register reg = std::get<ceddec::Register>(inst.destination.value);
-                    uint32_t ver = ++state.counters[reg];
-                    inst.destination.ssa_version = ver;
-                    state.stacks[reg].push_back(ver);
-                    pushed_regs.push_back(reg);
+                    if (reg != ceddec::Register::Unknown) {
+                        uint32_t ver = ++state.counters[reg];
+                        inst.destination.ssa_version = ver;
+                        state.stacks[reg].push_back(ver);
+                        pushed_regs.push_back(reg);
+                    }
                 }
             }
         }
@@ -156,7 +233,7 @@ namespace {
             /* source operands read active stack top */
             if (std::holds_alternative<ceddec::Register>(inst.source.value)) {
                 ceddec::Register reg = std::get<ceddec::Register>(inst.source.value);
-                if (!state.stacks[reg].empty()) {
+                if (reg != ceddec::Register::Unknown && !state.stacks[reg].empty()) {
                     inst.source.ssa_version = state.stacks[reg].back();
                 }
             }
@@ -165,7 +242,7 @@ namespace {
                 /* destination operand for CMP/TEST/BITTEST is ALSO a READ, not a write */
                 if (std::holds_alternative<ceddec::Register>(inst.destination.value)) {
                     ceddec::Register reg = std::get<ceddec::Register>(inst.destination.value);
-                    if (!state.stacks[reg].empty()) {
+                    if (reg != ceddec::Register::Unknown && !state.stacks[reg].empty()) {
                         inst.destination.ssa_version = state.stacks[reg].back();
                     }
                 }
@@ -173,10 +250,15 @@ namespace {
                 /* destination operands push a new version */
                 if (std::holds_alternative<ceddec::Register>(inst.destination.value)) {
                     ceddec::Register reg = std::get<ceddec::Register>(inst.destination.value);
-                    uint32_t ver = ++state.counters[reg];
-                    inst.destination.ssa_version = ver;
-                    state.stacks[reg].push_back(ver);
-                    pushed_regs.push_back(reg);
+                    if (reg != ceddec::Register::Unknown) {
+                        inst.destination.pre_write_version = state.stacks[reg].empty()
+                            ? 0
+                            : state.stacks[reg].back();
+                        uint32_t ver = ++state.counters[reg];
+                        inst.destination.ssa_version = ver;
+                        state.stacks[reg].push_back(ver);
+                        pushed_regs.push_back(reg);
+                    }
                 }
             }
         }
@@ -197,7 +279,7 @@ namespace {
                 if (inst.opcode == ceddec::IROpcode::Phi) {
                     if (std::holds_alternative<ceddec::Register>(inst.destination.value)) {
                         ceddec::Register reg = std::get<ceddec::Register>(inst.destination.value);
-                        if (pred_index < inst.phi_sources.size()) {
+                        if (reg != ceddec::Register::Unknown && pred_index < inst.phi_sources.size()) {
                             if (!state.stacks[reg].empty()) {
                                 inst.phi_sources[pred_index].ssa_version = state.stacks[reg].back();
                             }
@@ -473,7 +555,9 @@ namespace ceddec {
             for (const auto& inst : block.instructions) {
                 if (std::holds_alternative<Register>(inst.destination.value)) {
                     Register reg = std::get<Register>(inst.destination.value);
-                    def_sites[reg].insert(block.id);
+                    if (reg != Register::Unknown) {
+                        def_sites[reg].insert(block.id);
+                    }
                 }
             }
         }
@@ -524,5 +608,104 @@ namespace ceddec {
         if (cfg.blocks.empty()) return;
         SSARenameState state;
         RenameBlockDFS(0, cfg, state);
+    }
+
+    std::set<Register> IRLifter::FindUpwardExposedRegisters(const ControlFlowGraph& cfg) {
+        std::set<Register> live_in;
+        if (cfg.blocks.empty()) return live_in;
+
+        std::set<size_t> visited;
+
+        std::function<void(size_t, std::set<Register>)> walk =
+            [&](size_t block_id, std::set<Register> written_so_far) {
+            if (block_id >= cfg.blocks.size() || !visited.insert(block_id).second) return;
+            const auto& block = cfg.blocks[block_id];
+
+            auto check_read = [&](const IROperand& op) {
+                if (std::holds_alternative<Register>(op.value)) {
+                    Register r = std::get<Register>(op.value);
+                    if (r != Register::Unknown && !written_so_far.count(r)) {
+                        live_in.insert(r);
+                    }
+                }
+            };
+            auto check_write = [&](const IROperand& op) {
+                if (std::holds_alternative<Register>(op.value)) {
+                    Register r = std::get<Register>(op.value);
+                    if (r != Register::Unknown) written_so_far.insert(r);
+                }
+            };
+
+            for (const auto& inst : block.instructions) {
+                if (inst.opcode == IROpcode::Phi) continue;
+
+                check_read(inst.source);
+                if (DestIsAlsoRead(inst.opcode)) {
+                    check_read(inst.destination);
+                }
+                if (!IsPureReadDest(inst.opcode)) {
+                    check_write(inst.destination);
+                }
+            }
+
+            for (size_t succ : block.successors) {
+                walk(succ, written_so_far);
+            }
+        };
+
+        walk(0, {});
+        return live_in;
+    }
+
+    Register IRLifter::RegisterFamily64(Register r) {
+        switch (r) {
+            case Register::RDI: case Register::EDI: case Register::DI: case Register::DIL:
+                return Register::RDI;
+            case Register::RSI: case Register::ESI: case Register::SI: case Register::SIL:
+                return Register::RSI;
+            case Register::RDX: case Register::EDX: case Register::DX:
+            case Register::DL: case Register::DH:
+                return Register::RDX;
+            case Register::RCX: case Register::ECX: case Register::CX:
+            case Register::CL: case Register::CH:
+                return Register::RCX;
+            case Register::R8: case Register::R8D: case Register::R8W: case Register::R8B:
+                return Register::R8;
+            case Register::R9: case Register::R9D: case Register::R9W: case Register::R9B:
+                return Register::R9;
+            default:
+                return r;
+        }
+    }
+
+    const std::vector<Register>& IRLifter::SysVIntArgOrder() {
+        static const std::vector<Register> order = {
+            Register::RDI, Register::RSI, Register::RDX, Register::RCX, Register::R8, Register::R9
+        };
+        return order;
+    }
+
+    std::map<Register, size_t> IRLifter::BuildParamIndexMap(const std::set<Register>& live_in) {
+        std::map<Register, size_t> result;
+        std::set<Register> families;
+        for (Register r : live_in) {
+            families.insert(RegisterFamily64(r));
+        }
+
+        size_t idx = 0;
+        for (Register candidate : SysVIntArgOrder()) {
+            if (families.count(candidate)) {
+                result[candidate] = idx++;
+            }
+        }
+        return result;
+    }
+
+    bool IRLifter::IsBackEdge(const ControlFlowGraph& cfg, size_t from_block, size_t to_block) {
+        if (to_block >= cfg.blocks.size()) return false;
+        const auto& to_doms = cfg.blocks[to_block].dominators;
+        return std::find(to_doms.begin(), to_doms.end(), to_block) != to_doms.end()
+            && std::find(cfg.blocks[from_block].dominators.begin(), cfg.blocks[from_block].dominators.end(), to_block)
+               != cfg.blocks[from_block].dominators.end();
     }
 }

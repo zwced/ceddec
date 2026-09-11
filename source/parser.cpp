@@ -258,8 +258,13 @@ namespace {
             }
         }
 
+        if (config.max_operand_count != 0 && instr.operands.size() > config.max_operand_count) {
+            instr.operands.resize(config.max_operand_count);
+        }
+
         instr.condition = DetectX86Condition(ToLower(instr.mnemonic));
-        instr.is_valid = (MapOpcode(ToLower(instr.mnemonic)) != IROpcode::Unknown) || instr.condition != ConditionCode::None || instr.mnemonic == "label";
+        bool opcode_known = MapOpcode(ToLower(instr.mnemonic)) != IROpcode::Unknown;
+        instr.is_valid = opcode_known || instr.condition != ConditionCode::None || instr.mnemonic == "label" || config.allow_unknown_mnemonics;
 
         return instr;
     }
@@ -297,7 +302,8 @@ namespace {
             if (ParseInteger(disp_part, d, config.default_hex_immediates)) {
                 mem.displacement = d;
             } else {
-                /* non-numeric displacement is a symbol (e.g. "my_global(%rip)"), no dedicated
+                /*
+                 * non-numeric displacement is a symbol (e.g. "my_global(%rip)"), no dedicated
                  * symbol field on MemoryOperand, so it's carried in `base` as a fallback.
                  */
                 mem.base = disp_part;
@@ -357,19 +363,35 @@ namespace {
 
         std::string mnem_lower_full = ToLower(raw_mnemonic);
         uint16_t suffix_width = 0;
+        bool had_size_suffix = false;
+
         std::string_view mnemonic = raw_mnemonic;
+        std::string_view sizable_stem; /* stem of a sizable mnemonic even when no suffix was found */
+
         if (!mnem_lower_full.empty()) {
             char last = mnem_lower_full.back();
             uint16_t w = (last == 'b') ? 8 : (last == 'w') ? 16 : (last == 'l') ? 32 : (last == 'q') ? 64 : 0;
+
             if (w != 0) {
                 std::string_view stem(mnem_lower_full.data(), mnem_lower_full.size() - 1);
-                if (kAttSizableMnemonics.count(stem)) {
+                if (kAttSizableMnemonics.count(stem) ||
+                    MapOpcode(stem) != IROpcode::Unknown) {
                     suffix_width = w;
+                    had_size_suffix = true;
                     mnemonic = raw_mnemonic.substr(0, raw_mnemonic.size() - 1);
                 }
             }
+
+            if (!had_size_suffix && kAttSizableMnemonics.count(mnem_lower_full)) {
+                sizable_stem = mnemonic; /* suffix-less but still a sizable base mnemonic */
+            }
         }
         instr.mnemonic = mnemonic;
+
+        /* strict mode + att_require_size_suffix: a sizable mnemonic with no b/w/l/q is ambiguous */
+        if (config.strict_mode && config.att_require_size_suffix && !had_size_suffix && !sizable_stem.empty()) {
+            return instr; /* is_valid stays false */
+        }
 
         if (operands_text.empty()) {
             instr.condition = DetectX86Condition(ToLower(instr.mnemonic));
@@ -382,7 +404,10 @@ namespace {
             ParsedOperand op;
             op.raw_text = tok;
 
-            if (tok.starts_with('*')) tok.remove_prefix(1); /* indirect call/jmp marker */
+            if (tok.starts_with('*')) {
+                if (!config.att_allow_star_indirect) continue; /* drop disallowed indirect-target token */
+                tok.remove_prefix(1); /* indirect call/jmp marker */
+            }
 
             if (tok.starts_with("%fs:"))      { op.segment = SegmentReg::Fs; tok.remove_prefix(4); }
             else if (tok.starts_with("%gs:")) { op.segment = SegmentReg::Gs; tok.remove_prefix(4); }
@@ -395,7 +420,11 @@ namespace {
                 op.type = OperandType::Immediate;
                 ParseInteger(tok.substr(1), op.immediate_val, config.default_hex_immediates);
             } else if (tok.starts_with('%')) {
+                /* at&t register sigil isn't part of the register name itself, strip it so
+                 * ParseRegister() (which expects bare "rax", not "%rax") can resolve it */
                 op.type = OperandType::Register;
+                tok.remove_prefix(1);
+                op.raw_text = tok;
             } else if (tok.find('(') != std::string_view::npos) {
                 op.type = OperandType::Memory;
                 op.mem = ParseAttMemoryExpression(tok, config);
@@ -429,15 +458,14 @@ namespace {
          * matching the convention the rest of this codebase (and Intel syntax) already uses.
          */
         std::reverse(ops.begin(), ops.end());
+        if (config.max_operand_count != 0 && ops.size() > config.max_operand_count) {
+            ops.resize(config.max_operand_count);
+        }
         instr.operands = std::move(ops);
 
         instr.condition = DetectX86Condition(ToLower(instr.mnemonic));
-
-        fprintf(stderr, "[debug] mnemonic='%.*s' len=%zu mapped_opcode=%d\n",
-            (int)instr.mnemonic.size(), instr.mnemonic.data(), instr.mnemonic.size(),
-            (int)MapOpcode(ToLower(instr.mnemonic)));
-
-        instr.is_valid = (MapOpcode(ToLower(instr.mnemonic)) != IROpcode::Unknown) || instr.condition != ConditionCode::None;
+        bool opcode_known = MapOpcode(ToLower(instr.mnemonic)) != IROpcode::Unknown;
+        instr.is_valid = opcode_known || instr.condition != ConditionCode::None || config.allow_unknown_mnemonics;
         return instr;
     }
 }
