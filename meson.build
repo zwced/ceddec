@@ -1,6 +1,6 @@
 project('ceddec', 'cpp',
   version : '0.0.21',
-  license : 'MIT',
+  license : 'CSL',
   default_options : [
     'cpp_std=c++20',
     'warning_level=2',
